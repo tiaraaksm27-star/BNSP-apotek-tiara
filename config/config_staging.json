@@ -1,0 +1,8 @@
+{
+  "environment": "STAGING",
+  "db_host": "127.0.0.1",
+  "db_name": "db_apotek_staging",
+  "db_user": "app_admin_pusat",
+  "db_pass": "AdminPusat#2026",
+  "log_level": "INFO"
+}
