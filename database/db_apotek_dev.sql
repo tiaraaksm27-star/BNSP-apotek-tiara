@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: Nov 13, 2026 at 07:51 PM
+-- Generation Time: Nov 16, 2026 at 02:10 AM
 -- Server version: 8.4.3
 -- PHP Version: 8.3.16
 
@@ -30,10 +30,11 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_proses_penjualan` (IN `p_no_fakt
     DECLARE v_peran VARCHAR(20);
     DECLARE v_kode_cabang VARCHAR(10);
     DECLARE v_wajib_apoteker TINYINT(1);
-    DECLARE v_harga DECIMAL(12,2);
+    DECLARE v_harga DECIMAL(12, 2);
     DECLARE v_stok_saat_ini INT;
+    DECLARE v_status_transaksi VARCHAR(30);
 
-    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION 
     BEGIN
         ROLLBACK;
         RESIGNAL;
@@ -41,52 +42,53 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_proses_penjualan` (IN `p_no_fakt
 
     START TRANSACTION;
 
-    -- Ambil data pengguna
-    SELECT id_pengguna, peran, kode_cabang 
-    INTO v_id_pengguna, v_peran, v_kode_cabang
+    -- Ambil data pengguna & cabang
+    SELECT id_pengguna, peran, kode_cabang INTO v_id_pengguna, v_peran, v_kode_cabang 
     FROM pengguna WHERE username = p_username;
 
     IF v_id_pengguna IS NULL OR v_kode_cabang IS NULL THEN
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = 'DITOLAK: Pengguna tidak valid atau tidak terikat cabang.';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'DITOLAK: Pengguna tidak valid atau tidak terikat cabang.';
     END IF;
 
-    -- Ambil data obat
-    SELECT o.harga_jual, k.wajib_apoteker 
-    INTO v_harga, v_wajib_apoteker
-    FROM obat o 
-    JOIN kategori_obat k ON o.kode_kategori = k.kode_kategori
+    -- Cek kategori obat & harga
+    SELECT o.harga_jual, k.wajib_apoteker INTO v_harga, v_wajib_apoteker 
+    FROM obat o JOIN kategori_obat k ON o.kode_kategori = k.kode_kategori 
     WHERE o.kode_obat = p_kode_obat;
 
-    -- Validasi Obat Keras
-    IF v_wajib_apoteker = 1 AND v_peran = 'Kasir' THEN
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = 'DITOLAK: Kasir tidak berwenang menjual Obat Keras!';
-    END IF;
-
-    -- Kunci baris stok (FOR UPDATE)
-    SELECT jumlah_stok INTO v_stok_saat_ini
-    FROM stok 
-    WHERE kode_cabang = v_kode_cabang AND kode_obat = p_kode_obat
-    FOR UPDATE;
+    -- Cek ketersediaan stok fisik dengan mengunci baris (FOR UPDATE)
+    SELECT jumlah_stok INTO v_stok_saat_ini 
+    FROM stok WHERE kode_cabang = v_kode_cabang AND kode_obat = p_kode_obat FOR UPDATE;
 
     IF v_stok_saat_ini IS NULL OR v_stok_saat_ini < p_jumlah THEN
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = 'DITOLAK: Stok cabang tidak mencukupi (ROLLBACK).';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'DITOLAK: Stok cabang tidak mencukupi (ROLLBACK).';
     END IF;
 
-    -- Simpan header (jika belum ada)
-    INSERT IGNORE INTO penjualan (no_faktur, kode_cabang, id_pengguna, total)
-    VALUES (p_no_faktur, v_kode_cabang, v_id_pengguna, 0);
+    -- Tentukan status transaksi: Jika Obat Keras, WAJIB Pending Approval Apoteker
+    IF v_wajib_apoteker = 1 THEN
+        SET v_status_transaksi = 'PENDING_APPROVAL';
+    ELSE
+        SET v_status_transaksi = 'COMPLETED';
+    END IF;
 
-    -- Simpan detail
-    INSERT INTO detail_penjualan (no_faktur, kode_obat, jumlah, harga, subtotal)
+    -- Insert Header Penjualan
+    INSERT IGNORE INTO penjualan (no_faktur, kode_cabang, id_pengguna, status_transaksi, total) 
+    VALUES (p_no_faktur, v_kode_cabang, v_id_pengguna, v_status_transaksi, 0);
+
+    -- Insert Detail Penjualan
+    INSERT INTO detail_penjualan (no_faktur, kode_obat, jumlah, harga, subtotal) 
     VALUES (p_no_faktur, p_kode_obat, p_jumlah, v_harga, v_harga * p_jumlah);
 
-    -- Update total
-    UPDATE penjualan
-    SET total = fn_hitung_total_faktur(p_no_faktur)
+    -- Update Total Faktur
+    UPDATE penjualan 
+    SET total = fn_hitung_total_faktur(p_no_faktur) 
     WHERE no_faktur = p_no_faktur;
+
+    -- Jika status COMPLETED (bukan obat keras), potong stok langsung secara otomatis
+    IF v_status_transaksi = 'COMPLETED' THEN
+        UPDATE stok 
+        SET jumlah_stok = jumlah_stok - p_jumlah 
+        WHERE kode_cabang = v_kode_cabang AND kode_obat = p_kode_obat;
+    END IF;
 
     COMMIT;
 END$$
@@ -94,8 +96,8 @@ END$$
 --
 -- Functions
 --
-CREATE DEFINER=`root`@`localhost` FUNCTION `fn_hitung_total_faktur` (`p_no_faktur` VARCHAR(25)) RETURNS DECIMAL(14,2) DETERMINISTIC READS SQL DATA BEGIN
-    DECLARE v_total DECIMAL(14,2);
+CREATE DEFINER=`root`@`localhost` FUNCTION `fn_hitung_total_faktur` (`p_no_faktur` VARCHAR(25)) RETURNS DECIMAL(14,2) DETERMINISTIC BEGIN
+    DECLARE v_total DECIMAL(14, 2);
     SELECT COALESCE(SUM(subtotal), 0) INTO v_total
     FROM detail_penjualan WHERE no_faktur = p_no_faktur;
     RETURN v_total;
@@ -135,9 +137,12 @@ INSERT INTO `cabang` (`kode_cabang`, `nama_cabang`, `alamat`, `telepon`) VALUES
 
 CREATE TABLE `detail_penjualan` (
   `id_detail` int NOT NULL,
-  `no_faktur` varchar(25) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `no_faktur` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `kode_obat` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `nomor_batch` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tanggal_kedaluwarsa` date DEFAULT NULL,
   `jumlah` int NOT NULL,
+  `harga_satuan` decimal(10,2) DEFAULT '0.00',
   `harga` decimal(12,2) NOT NULL,
   `subtotal` decimal(14,2) NOT NULL
 ) ;
@@ -146,12 +151,18 @@ CREATE TABLE `detail_penjualan` (
 -- Dumping data for table `detail_penjualan`
 --
 
-INSERT INTO `detail_penjualan` (`id_detail`, `no_faktur`, `kode_obat`, `jumlah`, `harga`, `subtotal`) VALUES
-(1, 'INV-20260901-001', 'OBT-001', 5, 8000.00, 40000.00),
-(2, 'INV-20260905-002', 'OBT-006', 2, 15000.00, 30000.00),
-(3, 'INV-20260910-003', 'OBT-001', 10, 8000.00, 80000.00),
-(4, 'INV-20260915-004', 'OBT-002', 2, 25000.00, 50000.00),
-(5, 'INV-20260920-005', 'OBT-003', 2, 18000.00, 36000.00);
+INSERT INTO `detail_penjualan` (`id_detail`, `no_faktur`, `kode_obat`, `nomor_batch`, `tanggal_kedaluwarsa`, `jumlah`, `harga_satuan`, `harga`, `subtotal`) VALUES
+(1, 'INV-20260901-001', 'OBT-001', NULL, NULL, 5, 0.00, 8000.00, 40000.00),
+(2, 'INV-20260905-002', 'OBT-006', NULL, NULL, 2, 0.00, 15000.00, 30000.00),
+(3, 'INV-20260910-003', 'OBT-001', NULL, NULL, 10, 0.00, 8000.00, 80000.00),
+(4, 'INV-20260915-004', 'OBT-002', NULL, NULL, 2, 0.00, 25000.00, 50000.00),
+(5, 'INV-20260920-005', 'OBT-003', NULL, NULL, 2, 0.00, 18000.00, 36000.00),
+(6, 'INV-261115221746', 'OBT-009', NULL, NULL, 1, 0.00, 35000.00, 35000.00),
+(7, 'INV-261115221802', 'OBT-001', NULL, NULL, 5, 0.00, 8000.00, 40000.00),
+(8, 'INV-261115221820', 'OBT-002', NULL, NULL, 1, 0.00, 25000.00, 25000.00),
+(9, 'INV-261115221834', 'OBT-010', NULL, NULL, 1, 0.00, 45000.00, 45000.00),
+(10, 'INV-261115221851', 'OBT-008', NULL, NULL, 1, 0.00, 28000.00, 28000.00),
+(11, 'INV-261115222049', 'OBT-007', NULL, NULL, 4, 0.00, 22000.00, 88000.00);
 
 --
 -- Triggers `detail_penjualan`
@@ -166,8 +177,7 @@ CREATE TRIGGER `trg_kurangi_stok_setelah_jual` AFTER INSERT ON `detail_penjualan
     WHERE kode_cabang = v_cabang AND kode_obat = NEW.kode_obat;
 
     INSERT INTO log_aktivitas (keterangan)
-    VALUES (CONCAT('Faktur ', NEW.no_faktur, ' | Stok ', NEW.kode_obat, 
-                   ' di ', v_cabang, ' berkurang ', NEW.jumlah));
+    VALUES (CONCAT('Faktur ', NEW.no_faktur, ': Stok ', NEW.kode_obat, ' di ', v_cabang, ' berkurang ', NEW.jumlah));
 END
 $$
 DELIMITER ;
@@ -181,7 +191,7 @@ DELIMITER ;
 CREATE TABLE `kategori_obat` (
   `kode_kategori` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
   `nama_kategori` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `wajib_apoteker` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = hanya boleh dijual Apoteker'
+  `wajib_apoteker` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -211,7 +221,13 @@ CREATE TABLE `log_aktivitas` (
 --
 
 INSERT INTO `log_aktivitas` (`id_log`, `waktu`, `keterangan`) VALUES
-(1, '2026-11-14 01:36:28', 'Inisialisasi sistem basis data 3NF selesai.');
+(1, '2026-11-15 20:08:45', 'Inisialisasi sistem basis data 3NF & migrasi data 5 cabang selesai.'),
+(2, '2026-11-16 05:17:46', 'Faktur INV-261115221746: Stok OBT-009 di CBG-JKT berkurang 1'),
+(3, '2026-11-16 05:18:02', 'Faktur INV-261115221802: Stok OBT-001 di CBG-JKT berkurang 5'),
+(4, '2026-11-16 05:18:20', 'Faktur INV-261115221820: Stok OBT-002 di CBG-JKT berkurang 1'),
+(5, '2026-11-16 05:18:34', 'Faktur INV-261115221834: Stok OBT-010 di CBG-JKT berkurang 1'),
+(6, '2026-11-16 05:18:51', 'Faktur INV-261115221851: Stok OBT-008 di CBG-JKT berkurang 1'),
+(7, '2026-11-16 05:20:49', 'Faktur INV-261115222049: Stok OBT-007 di CBG-JKT berkurang 4');
 
 -- --------------------------------------------------------
 
@@ -242,7 +258,9 @@ INSERT INTO `obat` (`kode_obat`, `kode_kategori`, `nama_obat`, `satuan`, `harga_
 ('OBT-007', 'KAT-03', 'Amlodipine 5mg', 'Strip', 22000.00, 10),
 ('OBT-008', 'KAT-01', 'Betadine Solution 30ml', 'Botol', 28000.00, 10),
 ('OBT-009', 'KAT-04', 'Masker Medis 3-Ply (Box)', 'Box', 35000.00, 10),
-('OBT-010', 'KAT-04', 'Termometer Digital', 'Unit', 45000.00, 5);
+('OBT-010', 'KAT-04', 'Termometer Digital', 'Unit', 45000.00, 5),
+('OBT-011', 'KAT-01', 'Ibuprofen 400mg', 'Strip', 12000.00, 10),
+('OBT-012', 'KAT-02', 'Cetirizine 10mg', 'Tablet', 8500.00, 5);
 
 -- --------------------------------------------------------
 
@@ -275,23 +293,30 @@ INSERT INTO `pengguna` (`id_pengguna`, `username`, `password_hash`, `nama_lengka
 --
 
 CREATE TABLE `penjualan` (
-  `no_faktur` varchar(25) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `no_faktur` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
   `kode_cabang` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
   `id_pengguna` int NOT NULL,
   `tanggal` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `total` decimal(14,2) NOT NULL DEFAULT '0.00'
+  `total` decimal(14,2) NOT NULL DEFAULT '0.00',
+  `status_transaksi` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'COMPLETED'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `penjualan`
 --
 
-INSERT INTO `penjualan` (`no_faktur`, `kode_cabang`, `id_pengguna`, `tanggal`, `total`) VALUES
-('INV-20260901-001', 'CBG-JKT', 3, '2026-09-01 09:15:00', 40000.00),
-('INV-20260905-002', 'CBG-JKT', 2, '2026-09-05 14:20:00', 30000.00),
-('INV-20260910-003', 'CBG-BGR', 1, '2026-09-10 17:45:00', 80000.00),
-('INV-20260915-004', 'CBG-DPK', 1, '2026-09-15 18:30:00', 50000.00),
-('INV-20260920-005', 'CBG-JKT', 3, '2026-09-20 19:10:00', 36000.00);
+INSERT INTO `penjualan` (`no_faktur`, `kode_cabang`, `id_pengguna`, `tanggal`, `total`, `status_transaksi`) VALUES
+('INV-20260901-001', 'CBG-JKT', 3, '2026-09-01 09:15:00', 40000.00, 'COMPLETED'),
+('INV-20260905-002', 'CBG-JKT', 2, '2026-09-05 14:20:00', 30000.00, 'COMPLETED'),
+('INV-20260910-003', 'CBG-BGR', 1, '2026-09-10 17:45:00', 80000.00, 'COMPLETED'),
+('INV-20260915-004', 'CBG-DPK', 1, '2026-09-15 18:30:00', 50000.00, 'COMPLETED'),
+('INV-20260920-005', 'CBG-JKT', 3, '2026-09-20 19:10:00', 36000.00, 'COMPLETED'),
+('INV-261115221746', 'CBG-JKT', 3, '2026-11-16 05:17:46', 35000.00, 'APPROVED'),
+('INV-261115221802', 'CBG-JKT', 3, '2026-11-16 05:18:02', 40000.00, 'APPROVED'),
+('INV-261115221820', 'CBG-JKT', 3, '2026-11-16 05:18:20', 25000.00, 'APPROVED'),
+('INV-261115221834', 'CBG-JKT', 3, '2026-11-16 05:18:34', 45000.00, 'APPROVED'),
+('INV-261115221851', 'CBG-JKT', 3, '2026-11-16 05:18:51', 28000.00, 'APPROVED'),
+('INV-261115222049', 'CBG-JKT', 3, '2026-11-16 05:20:49', 88000.00, 'PENDING_APPROVAL');
 
 -- --------------------------------------------------------
 
@@ -303,6 +328,8 @@ CREATE TABLE `stok` (
   `id_stok` int NOT NULL,
   `kode_cabang` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
   `kode_obat` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `nomor_batch` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT 'BATCH-001',
+  `tanggal_kedaluwarsa` date DEFAULT '2027-12-31',
   `jumlah_stok` int NOT NULL DEFAULT '0'
 ) ;
 
@@ -310,26 +337,27 @@ CREATE TABLE `stok` (
 -- Dumping data for table `stok`
 --
 
-INSERT INTO `stok` (`id_stok`, `kode_cabang`, `kode_obat`, `jumlah_stok`) VALUES
-(1, 'CBG-JKT', 'OBT-001', 50),
-(2, 'CBG-JKT', 'OBT-002', 30),
-(3, 'CBG-JKT', 'OBT-003', 8),
-(4, 'CBG-JKT', 'OBT-004', 30),
-(5, 'CBG-JKT', 'OBT-005', 45),
-(6, 'CBG-JKT', 'OBT-006', 25),
-(7, 'CBG-JKT', 'OBT-007', 18),
-(8, 'CBG-JKT', 'OBT-008', 22),
-(9, 'CBG-JKT', 'OBT-009', 40),
-(10, 'CBG-JKT', 'OBT-010', 12),
-(11, 'CBG-BGR', 'OBT-001', 40),
-(12, 'CBG-BGR', 'OBT-002', 25),
-(13, 'CBG-BGR', 'OBT-006', 20),
-(14, 'CBG-BGR', 'OBT-009', 30),
-(15, 'CBG-DPK', 'OBT-001', 35),
-(16, 'CBG-DPK', 'OBT-002', 15),
-(17, 'CBG-DPK', 'OBT-005', 20),
-(18, 'CBG-TGR', 'OBT-001', 35),
-(19, 'CBG-BKS', 'OBT-001', 50);
+INSERT INTO `stok` (`id_stok`, `kode_cabang`, `kode_obat`, `nomor_batch`, `tanggal_kedaluwarsa`, `jumlah_stok`) VALUES
+(1, 'CBG-JKT', 'OBT-001', 'BATCH-001', '2027-12-31', 40),
+(2, 'CBG-JKT', 'OBT-002', 'BATCH-001', '2027-12-31', 28),
+(3, 'CBG-JKT', 'OBT-003', 'BATCH-001', '2027-12-31', 8),
+(4, 'CBG-JKT', 'OBT-004', 'BATCH-001', '2027-12-31', 30),
+(5, 'CBG-JKT', 'OBT-005', 'BATCH-001', '2027-12-31', 45),
+(6, 'CBG-JKT', 'OBT-006', 'BATCH-001', '2027-12-31', 25),
+(7, 'CBG-JKT', 'OBT-007', 'BATCH-001', '2027-12-31', 10),
+(8, 'CBG-JKT', 'OBT-008', 'BATCH-001', '2027-12-31', 20),
+(9, 'CBG-JKT', 'OBT-009', 'BATCH-001', '2027-12-31', 38),
+(10, 'CBG-JKT', 'OBT-010', 'BATCH-001', '2027-12-31', 10),
+(11, 'CBG-BGR', 'OBT-001', 'BATCH-001', '2027-12-31', 70),
+(12, 'CBG-BGR', 'OBT-002', 'BATCH-001', '2027-12-31', 25),
+(13, 'CBG-BGR', 'OBT-006', 'BATCH-001', '2027-12-31', 20),
+(14, 'CBG-BGR', 'OBT-009', 'BATCH-001', '2027-12-31', 30),
+(15, 'CBG-DPK', 'OBT-001', 'BATCH-001', '2027-12-31', 35),
+(16, 'CBG-DPK', 'OBT-002', 'BATCH-001', '2027-12-31', 15),
+(17, 'CBG-DPK', 'OBT-005', 'BATCH-001', '2027-12-31', 20),
+(18, 'CBG-TGR', 'OBT-001', 'BATCH-001', '2027-12-31', 35),
+(19, 'CBG-BKS', 'OBT-001', 'BATCH-001', '2027-12-31', 50),
+(25, 'CBG-DPK', 'OBT-003', 'BATCH-001', '2027-12-31', 25);
 
 -- --------------------------------------------------------
 
@@ -407,8 +435,7 @@ ALTER TABLE `penjualan`
 ALTER TABLE `stok`
   ADD PRIMARY KEY (`id_stok`),
   ADD UNIQUE KEY `uk_cabang_obat` (`kode_cabang`,`kode_obat`),
-  ADD KEY `fk_stok_obat` (`kode_obat`),
-  ADD KEY `idx_stok_cabang_obat` (`kode_cabang`,`kode_obat`);
+  ADD KEY `fk_stok_obat` (`kode_obat`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -424,7 +451,7 @@ ALTER TABLE `detail_penjualan`
 -- AUTO_INCREMENT for table `log_aktivitas`
 --
 ALTER TABLE `log_aktivitas`
-  MODIFY `id_log` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id_log` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT for table `pengguna`
