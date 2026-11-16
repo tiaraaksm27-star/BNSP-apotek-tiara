@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: Nov 16, 2026 at 02:10 AM
+-- Generation Time: Nov 16, 2026 at 03:42 AM
 -- Server version: 8.4.3
 -- PHP Version: 8.3.16
 
@@ -162,7 +162,10 @@ INSERT INTO `detail_penjualan` (`id_detail`, `no_faktur`, `kode_obat`, `nomor_ba
 (8, 'INV-261115221820', 'OBT-002', NULL, NULL, 1, 0.00, 25000.00, 25000.00),
 (9, 'INV-261115221834', 'OBT-010', NULL, NULL, 1, 0.00, 45000.00, 45000.00),
 (10, 'INV-261115221851', 'OBT-008', NULL, NULL, 1, 0.00, 28000.00, 28000.00),
-(11, 'INV-261115222049', 'OBT-007', NULL, NULL, 4, 0.00, 22000.00, 88000.00);
+(11, 'INV-261115222049', 'OBT-007', NULL, NULL, 4, 0.00, 22000.00, 88000.00),
+(12, 'INV-261116031729', 'OBT-006', NULL, NULL, 1, 0.00, 15000.00, 15000.00),
+(13, 'INV-261116031756', 'OBT-006', NULL, NULL, 1, 0.00, 15000.00, 15000.00),
+(14, 'INV-261116033422', 'OBT-002', NULL, NULL, 1, 0.00, 25000.00, 25000.00);
 
 --
 -- Triggers `detail_penjualan`
@@ -227,7 +230,10 @@ INSERT INTO `log_aktivitas` (`id_log`, `waktu`, `keterangan`) VALUES
 (4, '2026-11-16 05:18:20', 'Faktur INV-261115221820: Stok OBT-002 di CBG-JKT berkurang 1'),
 (5, '2026-11-16 05:18:34', 'Faktur INV-261115221834: Stok OBT-010 di CBG-JKT berkurang 1'),
 (6, '2026-11-16 05:18:51', 'Faktur INV-261115221851: Stok OBT-008 di CBG-JKT berkurang 1'),
-(7, '2026-11-16 05:20:49', 'Faktur INV-261115222049: Stok OBT-007 di CBG-JKT berkurang 4');
+(7, '2026-11-16 05:20:49', 'Faktur INV-261115222049: Stok OBT-007 di CBG-JKT berkurang 4'),
+(8, '2026-11-16 10:17:29', 'Faktur INV-261116031729: Stok OBT-006 di CBG-JKT berkurang 1'),
+(9, '2026-11-16 10:17:56', 'Faktur INV-261116031756: Stok OBT-006 di CBG-JKT berkurang 1'),
+(10, '2026-11-16 10:34:22', 'Faktur INV-261116033422: Stok OBT-002 di CBG-JKT berkurang 1');
 
 -- --------------------------------------------------------
 
@@ -309,14 +315,17 @@ INSERT INTO `penjualan` (`no_faktur`, `kode_cabang`, `id_pengguna`, `tanggal`, `
 ('INV-20260901-001', 'CBG-JKT', 3, '2026-09-01 09:15:00', 40000.00, 'COMPLETED'),
 ('INV-20260905-002', 'CBG-JKT', 2, '2026-09-05 14:20:00', 30000.00, 'COMPLETED'),
 ('INV-20260910-003', 'CBG-BGR', 1, '2026-09-10 17:45:00', 80000.00, 'COMPLETED'),
-('INV-20260915-004', 'CBG-DPK', 1, '2026-09-15 18:30:00', 50000.00, 'COMPLETED'),
+('INV-20260915-004', 'CBG-DPK', 1, '2026-09-15 18:30:00', 50000.00, 'CANCELLED'),
 ('INV-20260920-005', 'CBG-JKT', 3, '2026-09-20 19:10:00', 36000.00, 'COMPLETED'),
 ('INV-261115221746', 'CBG-JKT', 3, '2026-11-16 05:17:46', 35000.00, 'APPROVED'),
 ('INV-261115221802', 'CBG-JKT', 3, '2026-11-16 05:18:02', 40000.00, 'APPROVED'),
 ('INV-261115221820', 'CBG-JKT', 3, '2026-11-16 05:18:20', 25000.00, 'APPROVED'),
 ('INV-261115221834', 'CBG-JKT', 3, '2026-11-16 05:18:34', 45000.00, 'APPROVED'),
 ('INV-261115221851', 'CBG-JKT', 3, '2026-11-16 05:18:51', 28000.00, 'APPROVED'),
-('INV-261115222049', 'CBG-JKT', 3, '2026-11-16 05:20:49', 88000.00, 'PENDING_APPROVAL');
+('INV-261115222049', 'CBG-JKT', 3, '2026-11-16 05:20:49', 88000.00, 'APPROVED'),
+('INV-261116031729', 'CBG-JKT', 3, '2026-11-16 10:17:29', 15000.00, 'PENDING_APPROVAL'),
+('INV-261116031756', 'CBG-JKT', 3, '2026-11-16 10:17:56', 15000.00, 'REJECTED'),
+('INV-261116033422', 'CBG-JKT', 2, '2026-11-16 10:34:22', 25000.00, 'APPROVED');
 
 -- --------------------------------------------------------
 
@@ -339,21 +348,21 @@ CREATE TABLE `stok` (
 
 INSERT INTO `stok` (`id_stok`, `kode_cabang`, `kode_obat`, `nomor_batch`, `tanggal_kedaluwarsa`, `jumlah_stok`) VALUES
 (1, 'CBG-JKT', 'OBT-001', 'BATCH-001', '2027-12-31', 40),
-(2, 'CBG-JKT', 'OBT-002', 'BATCH-001', '2027-12-31', 28),
+(2, 'CBG-JKT', 'OBT-002', 'BATCH-001', '2027-12-31', 26),
 (3, 'CBG-JKT', 'OBT-003', 'BATCH-001', '2027-12-31', 8),
 (4, 'CBG-JKT', 'OBT-004', 'BATCH-001', '2027-12-31', 30),
 (5, 'CBG-JKT', 'OBT-005', 'BATCH-001', '2027-12-31', 45),
-(6, 'CBG-JKT', 'OBT-006', 'BATCH-001', '2027-12-31', 25),
+(6, 'CBG-JKT', 'OBT-006', 'BATCH-001', '2027-12-31', 22),
 (7, 'CBG-JKT', 'OBT-007', 'BATCH-001', '2027-12-31', 10),
 (8, 'CBG-JKT', 'OBT-008', 'BATCH-001', '2027-12-31', 20),
 (9, 'CBG-JKT', 'OBT-009', 'BATCH-001', '2027-12-31', 38),
 (10, 'CBG-JKT', 'OBT-010', 'BATCH-001', '2027-12-31', 10),
-(11, 'CBG-BGR', 'OBT-001', 'BATCH-001', '2027-12-31', 70),
+(11, 'CBG-BGR', 'OBT-001', 'BATCH-001', '2027-12-31', 80),
 (12, 'CBG-BGR', 'OBT-002', 'BATCH-001', '2027-12-31', 25),
 (13, 'CBG-BGR', 'OBT-006', 'BATCH-001', '2027-12-31', 20),
 (14, 'CBG-BGR', 'OBT-009', 'BATCH-001', '2027-12-31', 30),
 (15, 'CBG-DPK', 'OBT-001', 'BATCH-001', '2027-12-31', 35),
-(16, 'CBG-DPK', 'OBT-002', 'BATCH-001', '2027-12-31', 15),
+(16, 'CBG-DPK', 'OBT-002', 'BATCH-001', '2027-12-31', 17),
 (17, 'CBG-DPK', 'OBT-005', 'BATCH-001', '2027-12-31', 20),
 (18, 'CBG-TGR', 'OBT-001', 'BATCH-001', '2027-12-31', 35),
 (19, 'CBG-BKS', 'OBT-001', 'BATCH-001', '2027-12-31', 50),
@@ -366,11 +375,11 @@ INSERT INTO `stok` (`id_stok`, `kode_cabang`, `kode_obat`, `nomor_batch`, `tangg
 -- (See below for the actual view)
 --
 CREATE TABLE `v_stok_kritis` (
-`jumlah_stok` int
-,`kode_cabang` varchar(10)
-,`kode_obat` varchar(10)
+`kode_cabang` varchar(10)
 ,`nama_cabang` varchar(100)
+,`kode_obat` varchar(10)
 ,`nama_obat` varchar(100)
+,`jumlah_stok` int
 ,`stok_minimum` int
 );
 
@@ -451,7 +460,7 @@ ALTER TABLE `detail_penjualan`
 -- AUTO_INCREMENT for table `log_aktivitas`
 --
 ALTER TABLE `log_aktivitas`
-  MODIFY `id_log` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+  MODIFY `id_log` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- AUTO_INCREMENT for table `pengguna`
